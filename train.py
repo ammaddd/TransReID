@@ -1,3 +1,5 @@
+from comet_ml import Experiment
+experiment = Experiment(auto_metric_logging=False)
 from utils.logger import setup_logger
 from datasets import make_dataloader
 from model import make_model
@@ -33,6 +35,8 @@ if __name__ == '__main__':
                         nargs=argparse.REMAINDER)
     parser.add_argument("--local_rank", default=0, type=int)
     args = parser.parse_args()
+    experiment.log_others(vars(args))
+    experiment.log_code("./datasets/market1501.py")
 
     if args.config_file != "":
         cfg.merge_from_file(args.config_file)
@@ -57,6 +61,7 @@ if __name__ == '__main__':
         with open(args.config_file, 'r') as cf:
             config_str = "\n" + cf.read()
             logger.info(config_str)
+            experiment.log_asset(args.config_file, 'config.yml')
     logger.info("Running with config:\n{}".format(cfg))
 
     if cfg.MODEL.DIST_TRAIN:
@@ -83,5 +88,7 @@ if __name__ == '__main__':
         optimizer_center,
         scheduler,
         loss_func,
-        num_query, args.local_rank
+        num_query,
+        args.local_rank,
+        experiment
     )
