@@ -42,6 +42,7 @@ def do_train(cfg,
     evaluator = R1_mAP_eval(num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)
     scaler = amp.GradScaler()
     # train
+    global_step = 0
     for epoch in range(1, epochs + 1):
         start_time = time.time()
         loss_meter.reset()
@@ -50,6 +51,7 @@ def do_train(cfg,
         scheduler.step(epoch)
         model.train()
         for n_iter, (img, vid, target_cam, target_view) in enumerate(train_loader):
+            global_step += 1
             optimizer.zero_grad()
             optimizer_center.zero_grad()
             img = img.to(device)
@@ -64,7 +66,7 @@ def do_train(cfg,
                 experiment.log_image(img[0].detach().cpu().numpy(),
                                      name='train_images',
                                      image_channels="first",
-                                     step=(n_iter+1)*epoch)
+                                     step=global_step)
             scaler.scale(loss).backward()
 
             scaler.step(optimizer)
@@ -82,10 +84,10 @@ def do_train(cfg,
 
             loss_meter.update(loss.item(), img.shape[0])
             acc_meter.update(acc, 1)
-            experiment.log_metric("train_loss", loss.item(), step=(n_iter+
-                                  1)*epoch, epoch=epoch)
-            experiment.log_metric("train_acc", acc, step=(n_iter+
-                                  1)*epoch, epoch=epoch)
+            experiment.log_metric("train_loss", loss.item(),
+                                  step=global_step, epoch=epoch)
+            experiment.log_metric("train_acc", acc,
+                                  step=global_step, epoch=epoch)
 
             torch.cuda.synchronize()
             if (n_iter + 1) % log_period == 0:
