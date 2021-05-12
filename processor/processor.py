@@ -17,7 +17,9 @@ def do_train(cfg,
              optimizer_center,
              scheduler,
              loss_fn,
-             num_query, local_rank):
+             num_query,
+             local_rank,
+             comet_logger):
     log_period = cfg.SOLVER.LOG_PERIOD
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
     eval_period = cfg.SOLVER.EVAL_PERIOD
@@ -40,6 +42,7 @@ def do_train(cfg,
     evaluator = R1_mAP_eval(num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)
     scaler = amp.GradScaler()
     # train
+    global_step = 0
     for epoch in range(1, epochs + 1):
         start_time = time.time()
         loss_meter.reset()
@@ -48,6 +51,7 @@ def do_train(cfg,
         scheduler.step(epoch)
         model.train()
         for n_iter, (img, vid, target_cam, target_view) in enumerate(train_loader):
+            global_step += 1
             optimizer.zero_grad()
             optimizer_center.zero_grad()
             img = img.to(device)
@@ -58,6 +62,11 @@ def do_train(cfg,
                 score, feat = model(img, target, cam_label=target_cam, view_label=target_view )
                 loss = loss_fn(score, feat, target, target_cam)
 
+            if n_iter % 100 == 0:
+                comet_logger.log_image(img[0].detach().cpu().numpy(),
+                                       name='train_images',
+                                       image_channels="first",
+                                       step=global_step)
             scaler.scale(loss).backward()
 
             scaler.step(optimizer)
@@ -75,6 +84,10 @@ def do_train(cfg,
 
             loss_meter.update(loss.item(), img.shape[0])
             acc_meter.update(acc, 1)
+            comet_logger.log_metric("train_loss", loss.item(),
+                                    step=global_step, epoch=epoch)
+            comet_logger.log_metric("train_acc", acc,
+                                    step=global_step, epoch=epoch)
 
             torch.cuda.synchronize()
             if (n_iter + 1) % log_period == 0:
@@ -95,9 +108,15 @@ def do_train(cfg,
                 if dist.get_rank() == 0:
                     torch.save(model.state_dict(),
                                os.path.join(cfg.OUTPUT_DIR, cfg.MODEL.NAME + '_{}.pth'.format(epoch)))
+                    comet_logger.log_model("TransREID", os.path.join(cfg.
+                                           OUTPUT_DIR, cfg.MODEL.NAME +
+                                           '_{}.pth'.format(epoch)))
             else:
                 torch.save(model.state_dict(),
                            os.path.join(cfg.OUTPUT_DIR, cfg.MODEL.NAME + '_{}.pth'.format(epoch)))
+                comet_logger.log_model("TransREID", os.path.join(cfg.
+                                       OUTPUT_DIR, cfg.MODEL.NAME +
+                                       '_{}.pth'.format(epoch)))
 
         if epoch % eval_period == 0:
             if cfg.MODEL.DIST_TRAIN:
@@ -113,8 +132,14 @@ def do_train(cfg,
                     cmc, mAP, _, _, _, _, _ = evaluator.compute()
                     logger.info("Validation Results - Epoch: {}".format(epoch))
                     logger.info("mAP: {:.1%}".format(mAP))
+                    comet_logger.log_metric("val_mAP", mAP, epoch=epoch)
+
                     for r in [1, 5, 10]:
                         logger.info("CMC curve, Rank-{:<3}:{:.1%}".format(r, cmc[r - 1]))
+                        comet_logger.log_metric("val_CMC_curve_Rank-{}".
+                                                format(r), cmc[r - 1],
+                                                epoch=epoch)
+
                     torch.cuda.empty_cache()
             else:
                 model.eval()
@@ -128,8 +153,13 @@ def do_train(cfg,
                 cmc, mAP, _, _, _, _, _ = evaluator.compute()
                 logger.info("Validation Results - Epoch: {}".format(epoch))
                 logger.info("mAP: {:.1%}".format(mAP))
+                comet_logger.log_metric("val_mAP", mAP, epoch=epoch)
+
                 for r in [1, 5, 10]:
                     logger.info("CMC curve, Rank-{:<3}:{:.1%}".format(r, cmc[r - 1]))
+                    comet_logger.log_metric("val_CMC_curve_Rank-{}".
+                                            format(r), cmc[r - 1],
+                                            epoch=epoch)
                 torch.cuda.empty_cache()
 
 
